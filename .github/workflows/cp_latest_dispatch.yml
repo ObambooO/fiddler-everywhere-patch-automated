@@ -11,6 +11,7 @@ on:
         options:
           - Windows (x86_64)
           - Linux (x86_64)
+          - Mac (arm64)
       patch-server-port:
         description: 'Patch server port (useful for resolving port conflicts)"'
         required: true
