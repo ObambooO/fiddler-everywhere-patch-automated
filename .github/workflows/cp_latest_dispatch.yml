@@ -266,7 +266,7 @@ jobs:
             exit 1
           }
 
-      - name: Extract exe $destination_server_folder = "FE/resources/app/out/file"$destination_server_folder = "FE/resources/app/out"$destination_server_folder = "FE/resources/app/out/file"
+      - name: Extract exe
         run: 7z x "FiddlerEverywhereSetup.exe" -ofe_extracted
 
       - name: Extract app
@@ -441,12 +441,13 @@ jobs:
       - name: Copy Server Folder
         run: |
           $source_server_folder = "msojocs-patch/server/file"
-          $destination_server_folder = "FE/resources/app/out"
+          $destination_server_folder = "FE/resources/app/out/file"
 
           if (Test-Path $source_server_folder) {
-            Copy-Item -Path $source_server_folder -Destination $destination_server_folder -Recurse
+            New-Item -ItemType Directory -Path $destination_server_folder -Force | Out-Null
+            Copy-Item -Path "$source_server_folder/*" -Destination $destination_server_folder -Recurse -Force
           } else {
-            Write-Host "Source Server Folder not found"
+            throw "Source Server Folder not found: $source_server_folder"
           }
 
       - name: Enable Chinese translation
