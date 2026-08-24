@@ -492,14 +492,13 @@ jobs:
       - name: Patch main.js to main.original.js
         run: |
           $source_main = "FE/resources/app/out/main.js"
-          $main_content = Get-Content -Path $source_main -Raw
-
           $new_main = "FE/resources/app/out/main.original.js"
 
           $source_index = "msojocs-patch/server/index.js"
-          $index_content = Get-Content -Path $source_index -Raw
-          
+
           if ((Test-Path $source_main) -and (Test-Path $source_index)) {
+            $main_content = Get-Content -Path $source_main -Raw
+            $index_content = Get-Content -Path $source_index -Raw
             Copy-Item -Path $source_main -Destination $new_main
 
             $appended_content = $index_content + $main_content
