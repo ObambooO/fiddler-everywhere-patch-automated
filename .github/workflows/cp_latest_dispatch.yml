@@ -266,7 +266,7 @@ jobs:
             exit 1
           }
 
-      - name: Extract exe $destination_server_folder = "FE/resources/app/out/file"
+      - name: Extract exe $destination_server_folder = "FE/resources/app/out/file"$destination_server_folder = "FE/resources/app/out"$destination_server_folder = "FE/resources/app/out/file"
         run: 7z x "FiddlerEverywhereSetup.exe" -ofe_extracted
 
       - name: Extract app
