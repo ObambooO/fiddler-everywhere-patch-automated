@@ -365,6 +365,38 @@ jobs:
             }
           }
 
+      - name: Set up Node.js for ASAR extraction
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Unpack Mac Electron app
+        run: |
+          $app = Get-ChildItem -Path "fe_app" -Filter "*.app" -Directory | Select-Object -First 1
+          if (-not $app) {
+            throw "Fiddler Everywhere app bundle was not found"
+          }
+
+          $resources = Join-Path $app.FullName "Contents/Resources"
+          $asar = Join-Path $resources "app.asar"
+          $unpacked = Join-Path $resources "app.asar.unpacked"
+          $appDirectory = Join-Path $resources "app"
+
+          # The 8.0.1 ASAR header references this optional notice, but the DMG omits it.
+          $missingNotice = Join-Path $unpacked "NOTICES-reporter.txt"
+          if (-not (Test-Path $missingNotice)) {
+            New-Item -ItemType File -Path $missingNotice -Force | Out-Null
+          }
+
+          npx --yes @electron/asar@3.2.18 extract $asar $appDirectory
+          if ($LASTEXITCODE -ne 0) {
+            throw "Failed to extract app.asar"
+          }
+
+          ditto $unpacked $appDirectory
+          Remove-Item -Path $asar -Force
+          Remove-Item -Path $unpacked -Recurse -Force
+
       - name: Package Mac app
         shell: bash
         run: tar -czf fe_app.tar.gz fe_app
@@ -430,7 +462,7 @@ jobs:
               throw "Fiddler Everywhere app bundle was not found"
             }
 
-            $appRoot = Join-Path $app.FullName "Contents/Resources/app.asar.unpacked"
+            $appRoot = Join-Path $app.FullName "Contents/Resources/app"
             "FE_BUNDLE_PATH=$($app.FullName)" | Out-File -Append -FilePath $env:GITHUB_ENV
           } else {
             Rename-Item -Path "fe_download" -NewName "FE"
