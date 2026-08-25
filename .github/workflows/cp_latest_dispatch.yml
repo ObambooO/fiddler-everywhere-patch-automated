@@ -351,7 +351,18 @@ jobs:
             $destinationApp = Join-Path "fe_app" $app.Name
             ditto $app.FullName $destinationApp
           } finally {
-            hdiutil detach "dmg_mount"
+            for ($attempt = 1; $attempt -le 5; $attempt++) {
+              hdiutil detach "dmg_mount"
+              if ($LASTEXITCODE -eq 0) {
+                break
+              }
+
+              Start-Sleep -Seconds 2
+            }
+
+            if ($LASTEXITCODE -ne 0) {
+              hdiutil detach "dmg_mount" -force
+            }
           }
 
       - name: Package Mac app
