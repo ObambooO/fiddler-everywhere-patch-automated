@@ -2,11 +2,18 @@
 
 try {
     Write-Host "🔎 Fetching latest version of Fiddler Everywhere..."
-    $url = "https://www.telerik.com/support/whats-new/fiddler-everywhere/release-history"
+    if ($env:OS_ARCH -eq 'Mac (arm64)') {
+        $url = "https://downloads.getfiddler.com/mac-arm64/latest-mac.yml"
+        $content = Invoke-RestMethod -Uri $url -Method Get
+        $versionPattern = '(?m)^version:\s*(\d+\.\d+\.\d+)\s*$'
+    }
+    else {
+        $url = "https://www.telerik.com/support/whats-new/fiddler-everywhere/release-history"
+        $content = Invoke-RestMethod -Uri $url -Method Get
+        $versionPattern = 'Fiddler Everywhere v(\d+\.\d+\.\d+)'
+    }
 
-    $htmlContent = Invoke-RestMethod -Uri $url -Method Get
-
-    if ($htmlContent -match 'Fiddler Everywhere v(\d+\.\d+\.\d+)') {
+    if ($content -match $versionPattern) {
         $version = $matches[1]
         Write-Host "✅ Latest Version Found: $version"
 
