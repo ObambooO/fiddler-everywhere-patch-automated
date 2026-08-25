@@ -6,7 +6,7 @@ on:
       os-and-arch:
         description: 'Operating System And Architecture'
         required: true
-        default: '6.0.0'
+        default: 'Windows (x86_64)'
         type: choice
         options:
           - Windows (x86_64)
@@ -320,60 +320,53 @@ jobs:
           if-no-files-found: error
 
   download-fiddler-everywhere-mac:
-    if: ${{ github.event.inputs.os-and-arch == 'Mac (x86_64)' || github.event.inputs.os-and-arch == 'Mac (arm64)' || github.event.inputs.os-and-arch == 'Mac (arm64e)' }}
-    runs-on: mac-latest
+    if: ${{ github.event.inputs.os-and-arch == 'Mac (arm64)' }}
+    runs-on: macos-latest
     needs: 
       - scrape_fe_version
-
-    env: 
-      ARCH_CODE: ${{ github.event.inputs.arch_code }}
 
     steps:
       - name: Build URL & Download
         run: |
-          # Retrieve the scraped version from the previous step
           $scrapedVersion = "${{ needs.scrape_fe_version.outputs.scraped_version }}"
-          
-          # Check if the scraped version is available
-          if (-not [string]::IsNullOrEmpty($scrapedVersion)) {
-            $downloadUrl = "null"
-
-            if ($env:ARCH_CODE -eq "x86_64") {
-              $downloadUrl = "https://downloads.getfiddler.com/mac/Fiddler%20Everywhere%20$scrapedVersion.dmg"
-            } elseif ($env:ARCH_CODE -eq "arm64") {
-              $downloadUrl = "https://downloads.getfiddler.com/mac-arm64/Fiddler%20Everywhere%20$scrapedVersion.dmg"
-            } elseif ($env:ARCH_CODE -eq "arm64e") {
-              //Don't know
-            } else {
-              throw "Unsupported OS architecture: $env:ARCH_CODE"
-            }
-          
-            Write-Host "Download URL: $downloadUrl"
-
-            Invoke-WebRequest -Uri $downloadUrl -OutFile "FiddlerEverywhereSetup.dmg"
-            
-          } else {
-            Write-Host "SCRAPED_VERSION is empty or not set"
-            exit 1
+          if ([string]::IsNullOrEmpty($scrapedVersion)) {
+            throw "SCRAPED_VERSION is empty or not set"
           }
 
-      - name: Extract Dmg 
-        run: |
-          hdiutil attach FiddlerEverywhere.dmg
-          cp -R /Volumes/FiddlerEverywhere/* ./fe_app/
+          $downloadUrl = "https://downloads.getfiddler.com/mac-arm64/Fiddler%20Everywhere%20$scrapedVersion.dmg"
+          Write-Host "Download URL: $downloadUrl"
+          Invoke-WebRequest -Uri $downloadUrl -OutFile "FiddlerEverywhereSetup.dmg"
 
-      - name: List fe_app
-        run: Get-ChildItem -Recurse
+      - name: Extract DMG
+        run: |
+          New-Item -ItemType Directory -Path "dmg_mount", "fe_app" -Force | Out-Null
+          "Y" | hdiutil attach "FiddlerEverywhereSetup.dmg" -nobrowse -readonly -mountpoint "dmg_mount"
+
+          try {
+            $app = Get-ChildItem -Path "dmg_mount" -Filter "*.app" -Directory | Select-Object -First 1
+            if (-not $app) {
+              throw "Fiddler Everywhere app bundle was not found in the DMG"
+            }
+
+            $destinationApp = Join-Path "fe_app" $app.Name
+            ditto $app.FullName $destinationApp
+          } finally {
+            hdiutil detach "dmg_mount"
+          }
+
+      - name: Package Mac app
+        shell: bash
+        run: tar -czf fe_app.tar.gz fe_app
         
       - name: Upload Fiddler Everywhere Extracted folder as an artifact
         uses: actions/upload-artifact@v7
         with:
           name: fe_app
-          path: fe_app/
+          path: fe_app.tar.gz
           if-no-files-found: error
 
   patch_fe:
-    runs-on: windows-latest
+    runs-on: ${{ github.event.inputs.os-and-arch == 'Mac (arm64)' && 'macos-latest' || 'windows-latest' }}
 
     needs:
       - download-Yui-patch
@@ -407,27 +400,49 @@ jobs:
         uses: actions/download-artifact@v8
         with:
           name: fe_app
-          path: fe_app
+          path: fe_download
 
       - name: List the contents of the downloaded artifacts
         run: |
           Get-ChildItem -Recurse Yui-patch
           Get-ChildItem -Recurse msojocs-patch
-          Get-ChildItem -Recurse fe_app
+          Get-ChildItem -Recurse fe_download
 
-      - name: Rename main FE folder
-        run: Rename-Item -Path "fe_app" -NewName "FE"
+      - name: Prepare main FE folder
+        run: |
+          if ($env:OS_ARCH -eq 'Mac (arm64)') {
+            tar -xzf "fe_download/fe_app.tar.gz"
+            Rename-Item -Path "fe_app" -NewName "FE"
+
+            $app = Get-ChildItem -Path "FE" -Filter "*.app" -Directory | Select-Object -First 1
+            if (-not $app) {
+              throw "Fiddler Everywhere app bundle was not found"
+            }
+
+            $appRoot = Join-Path $app.FullName "Contents/Resources/app.asar.unpacked"
+            "FE_BUNDLE_PATH=$($app.FullName)" | Out-File -Append -FilePath $env:GITHUB_ENV
+          } else {
+            Rename-Item -Path "fe_download" -NewName "FE"
+            $appRoot = Join-Path (Resolve-Path "FE") "resources/app"
+          }
+
+          if (-not (Test-Path $appRoot)) {
+            throw "Fiddler Everywhere app resources not found: $appRoot"
+          }
+
+          "FE_APP_ROOT=$appRoot" | Out-File -Append -FilePath $env:GITHUB_ENV
 
       - name: Patch fiddler.dll / libfiddler.dll
         run: |
-          $original_fiddler = "FE/${{ needs.download-Yui-patch.outputs.Yui-fiddler-name }}"
+          $target_fiddler_name = if ($env:OS_ARCH -eq 'Mac (arm64)') { 'libfiddler.dylib' } else { '${{ needs.download-Yui-patch.outputs.Yui-fiddler-name }}' }
+          $original_fiddler = Get-ChildItem -Path "FE" -Filter $target_fiddler_name -File -Recurse | Select-Object -First 1
           $Yui_fiddler = "Yui-patch/${{ needs.download-Yui-patch.outputs.Yui-fiddler-name }}"
           
-          if ((Test-Path $original_fiddler) -and (Test-Path $Yui_fiddler)) {
-            Copy-Item -Path $Yui_fiddler -Destination $original_fiddler -Force
-            Write-Host "Replaced $original_fiddler with $Yui_fiddler"
+          if ($original_fiddler -and (Test-Path $Yui_fiddler)) {
+            Copy-Item -Path $Yui_fiddler -Destination $original_fiddler.FullName -Force
+            Write-Host "Replaced $($original_fiddler.FullName) with $Yui_fiddler"
           } else {
-            Write-Host "fiddler / libfiddler or Yui patch not found"
+            throw "fiddler / libfiddler or Yui patch not found"
           }
 
       - name: Clean Yui-patch
@@ -441,7 +456,7 @@ jobs:
       - name: Copy Server Folder
         run: |
           $source_server_folder = "msojocs-patch/server/file"
-          $destination_server_folder = "FE/resources/app/out/file"
+          $destination_server_folder = Join-Path $env:FE_APP_ROOT "out/file"
 
           if (Test-Path $source_server_folder) {
             New-Item -ItemType Directory -Path $destination_server_folder -Force | Out-Null
@@ -454,7 +469,7 @@ jobs:
         if: startsWith(env.PATCH_LANGUAGE, 'Yes')
         run: |
           $translate_js = "msojocs-patch/server/translate.js"
-          $dest_translate = "FE/resources/app/out/translate.js"
+          $dest_translate = Join-Path $env:FE_APP_ROOT "out/translate.js"
 
           if (Test-Path $translate_js) {
             Copy-Item -Path $translate_js -Destination $dest_translate -Force
@@ -478,7 +493,7 @@ jobs:
 
       - name: Set user credentials
         run: |
-          $source_json = "FE/resources/app/out/file/identity.getfiddler.com/oauth/token.json"
+          $source_json = Join-Path $env:FE_APP_ROOT "out/file/identity.getfiddler.com/oauth/token.json"
           $main_content = Get-Content -Path $source_json -Raw | ConvertFrom-Json
 
           $main_content.user_info.email = $env:PATCH_USER_EMAIL
@@ -491,8 +506,8 @@ jobs:
 
       - name: Patch main.js to main.original.js
         run: |
-          $source_main = "FE/resources/app/out/main.js"
-          $new_main = "FE/resources/app/out/main.original.js"
+          $source_main = Join-Path $env:FE_APP_ROOT "out/main.js"
+          $new_main = Join-Path $env:FE_APP_ROOT "out/main.original.js"
 
           $source_index = "msojocs-patch/server/index.js"
 
@@ -516,11 +531,16 @@ jobs:
             Write-Host "msojocs-patch Folder not found"
           }
 
+      - name: Re-sign Mac app
+        if: ${{ github.event.inputs.os-and-arch == 'Mac (arm64)' }}
+        run: codesign --force --deep --sign - "$env:FE_BUNDLE_PATH"
+
       - name: Rename FE 
         id: rename-fe
         run: |
           if (Test-Path FE) {
-            $newName = "Fiddler-Everywhere-V$env:SCRAPED_VERSION-Patched"
+            $platform = if ($env:OS_ARCH -eq 'Mac (arm64)') { 'Mac-arm64' } else { $env:OS_ARCH -replace '[^A-Za-z0-9]+', '-' }
+            $newName = "Fiddler-Everywhere-V$env:SCRAPED_VERSION-Patched-$platform"
             
             Rename-Item -Path "FE" -NewName $newName
             
@@ -529,9 +549,24 @@ jobs:
             Write-Host "FE Folder not found!?"
           }
 
+
+      - name: Package patched Mac app
+        if: ${{ github.event.inputs.os-and-arch == 'Mac (arm64)' }}
+        shell: bash
+        run: tar -czf "${{ steps.rename-fe.outputs.patched-fe-name }}.tar.gz" "${{ steps.rename-fe.outputs.patched-fe-name }}"
+
       - name: Upload Artifact for Patched FE
+        if: ${{ github.event.inputs.os-and-arch != 'Mac (arm64)' }}
         uses: actions/upload-artifact@v7
         with:
           name: "${{ steps.rename-fe.outputs.patched-fe-name }}"
           path: "${{ steps.rename-fe.outputs.patched-fe-name }}/"
+          if-no-files-found: error
+
+      - name: Upload Artifact for Patched Mac FE
+        if: ${{ github.event.inputs.os-and-arch == 'Mac (arm64)' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: "${{ steps.rename-fe.outputs.patched-fe-name }}"
+          path: "${{ steps.rename-fe.outputs.patched-fe-name }}.tar.gz"
           if-no-files-found: error
