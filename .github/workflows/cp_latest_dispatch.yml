@@ -556,6 +556,15 @@ jobs:
 
           if ((Test-Path $source_main) -and (Test-Path $source_index)) {
             $main_content = Get-Content -Path $source_main -Raw
+            if ($env:OS_ARCH -eq 'Mac (arm64)') {
+              $updateCall = 'He.checkForUpdatesAndNotify()'
+              if (-not $main_content.Contains($updateCall)) {
+                throw "Unable to find the Mac auto-update call"
+              }
+              $main_content = $main_content.Replace($updateCall, 'Promise.resolve()')
+              Write-Host "Disabled automatic updates for the patched Mac app"
+            }
+
             $index_content = Get-Content -Path $source_index -Raw
             Copy-Item -Path $source_main -Destination $new_main
 
